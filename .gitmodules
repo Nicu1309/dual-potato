@@ -1,0 +1,9 @@
+[submodule "ariane"]
+	path = ariane
+	url = https://github.com/pulp-platform/ariane.git
+[submodule "riscv-tests"]
+	path = riscv-tests
+	url = https://github.com/riscv/riscv-tests.git
+[submodule "riscv-fesvr"]
+	path = riscv-fesvr
+	url = https://github.com/pulp-platform/riscv-fesvr.git
