@@ -50,3 +50,10 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+#Vivado stuff
+*.cache/
+*.hw/
+*.ip_user_files/
+*.sim/
+*.xpr
