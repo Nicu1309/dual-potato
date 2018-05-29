@@ -1,0 +1,140 @@
+@500
+99999999999999999999999999999999
+000000000000001111578ab0000dfa00
+44444444454754444444444442424242
+33232323232323af3232ededcb756ca4
+@650
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+cccccccccccccccccccccccccccccccc
+dddddddddddddddddddddddddddddddd
+@ 1000
+0B8001130A8001130A80011300D00093 // DUMMY instructions at the begining of the code
+00D0009300D0009300D0009300D00093
+00D0009300D0009355FFFFFF00D00093 //This should cause exception
+@ 2000
+00000013000000133020007300302FF3 //CSRRS r31 <- ecause, not to set ecause because rs = 0
+@ 3000
+000000130000001330200073022081B3 //mul and mret interrupt
+
+@ 10000        // Jump to pc_init address
+93  // Operation ADDI(00D00093) -> r1 = r0 + 13
+00
+D0
+00  
+13  // Operation ADDI(0A800113) -> r2 = r0 + 168
+01
+80
+0A
+13  // Operation ADDI(0A800113) -> r2 = r0 + 168
+01
+80
+0A
+13  // Operation ADDI(0A800113) -> r2 = r0 + 168
+01
+80
+0A
+13  // Operation ADDI(0A800113) -> r2 = r0 + 168
+01
+80
+0A
+FF  // EXCEPTION
+01
+80
+0A
+13  // Operation ADDI(0A800113) -> r2 = r0 + 168
+01
+80
+0A
+13  // Operation ADDI(0A800113) -> r2 = r0 + 168
+01
+80
+0A
+13  // Operation ADDI(0A800113) -> r2 = r0 + 168
+01
+80
+0A
+13  // Operation ADDI(0A800113) -> r2 = r0 + 168
+01
+80
+0A
+13  // Operation ADDI(0A800113) -> r2 = r0 + 168
+01
+80
+0A
+FF  // EXCEPTION
+01
+80
+0A
+// NEED TO ADD NOP BEFORE MUL --> NO DEPENDENCY RESOLUTION
+//13 // Operation NOP (00000013) = ADDI -> r0 = r0 + 0
+//00
+//00
+//00
+// NEED TO ADD NOP BEFORE MUL --> NO DEPENDENCY RESOLUTION
+//13 // Operation NOP (00000013) = ADDI -> r0 = r0 + 0
+//00
+//00
+//00
+B3  // Operation MUL (022081B3) -> r3 = r1 * r2
+81
+20
+02
+//63  // Operation BEQ (00000863) -> Branch if r0 == 0 to pc+16
+//08
+//00
+//00
+13  // Operation NOP (00000013) = ADDI -> r0 = r0 + 0
+00
+00
+00
+13 // Operation NOP (00000013) = ADDI -> r0 = r0 + 0
+00
+00
+00
+@ 20000
+73 // MRET operation returning from exception
+00
+20
+30
+93 // Operation ADD probe to execute Exception (00000093) = ADDI -> r1 = r0 + 0
+00
+00
+00
+13 // Operation NOP (00000013) = ADDI -> r0 = r0 + 0
+00
+00
+00
+13 // Operation NOP (00000013) = ADDI -> r0 = r0 + 0
+00
+00
+00
+13 // Operation NOP (00000013) = ADDI -> r0 = r0 + 0
+00
+00
+00
+13 // Operation NOP (00000013) = ADDI -> r0 = r0 + 0
+00
+00
+00
+13 // Operation NOP (00000013) = ADDI -> r0 = r0 + 0
+00
+00
+00
+13 // Operation NOP (00000013) = ADDI -> r0 = r0 + 0
+00
+00
+00
+13 // Operation NOP (00000013) = ADDI -> r0 = r0 + 0
+00
+00
+00
+@ 30000
+B3  // Operation MUL (022081B3) -> r3 = r1 * r2
+81
+20
+02
+73 // MRET operation returning from exception
+00
+20
+30

@@ -38,7 +38,7 @@ module top_core(
         input reset;
         
         /******** Fetch  *******/
-        wire z, inst_hit;
+        wire z, inst_hit, hazard_fetch;
         wire [BITS_PC-1 : 0] pc_out, pc_in, pc_p4, next_pc, branch_pc;
         wire [BITS_DATA-1 : 0] fetched_inst;
         
@@ -46,12 +46,11 @@ module top_core(
         wire hazard_decode;
         wire [BITS_PC-1 : 0] save_pc_decode;
         wire [BITS_DATA-1 : 0] encoded_inst;
-        wire no_bypass, bypass_decode_ex_r0, bypass_decode_ex_r1, bypass_decode_mem_r0, 
+        wire no_bypass, bypass_decode_alu_r0, bypass_decode_alu_r1, bypass_decode_mem_r0, 
              bypass_decode_mem_r1, bypass_decode_wb_r0, bypass_decode_wb_r1;
         wire[BITS_DATA-1:0] rs0_val_decode_final, rs1_val_decode_final;
         wire use_rs1_decode, alu_en_decode, memread_en_decode, memwrite_en_decode, is_byte_decode;
         wire regwrite_en_decode, is_branch_decode, is_jump_decode;
-        wire  stop_mem;
         wire[BITS_DATA-1:0] data_writeback, rs0_val_decode, rs1_val_decode, immediate_extended_decode, effective_address_decode, data_store_decode;
         wire[BITS_REG_SELECT-1:0] rs0_decode, rs1_decode, rd_decode;
         wire[BITS_ALU_OPCODE-1:0] alu_opcode_decode;
@@ -59,16 +58,26 @@ module top_core(
         wire [BITS_REG_SELECT-1:0] instruction_rs0_decode, instruction_rs1_decode;
         
         /******** Execution *****/
-        wire alu_en_ex, regwrite_alu_en_ex, z_flag, uflow_flag, oflow_flag, is_branch_ex, is_jump_ex, gt_ex, lt_ex, eq_ex;
-        wire[BITS_DATA-1:0] op0_ex, op1_ex, alu_result_ex, rs1_val_ex, immediate_extended_ex, effective_address_ex;
+        wire alu_en_ex, regwrite_alu_en_ex, z_flag, uflow_flag, oflow_flag, is_branch_ex, is_jump_ex, gt_ex, lt_ex, eq_ex, is_byte_ex;
+        wire[BITS_DATA-1:0] op0_ex, op1_ex, alu_result_ex, rs1_val_ex, immediate_extended_ex, effective_address_ex, dout_ex;
         wire[BITS_REG_SELECT-1:0] rd_ex;
         wire[BITS_ALU_OPCODE-1:0] alu_opcode_ex;
         wire[BITS_PC-1:0] save_pc_ex; //This has pc
         wire[2:0] branch_mask_ex;
-        wire use_rs1_ex;
+        wire use_rs1_ex, memwrite_en_ex, memread_en_ex, regwrite_en_ex;
         
         /******** Memory  *******/
         wire data_hit;
+        wire[BITS_DATA-1:0] effective_address_mem, memout_mem, data_mem, mem_address_in, dout_mem;
+        wire[BITS_REG_SELECT-1:0] rd_mem;
+        wire is_byte_mem, memread_en_mem, memwrite_en_mem, regwrite_en_mem;
+        wire valid, mem_is_byte_instruction;
+        wire [BITS_DATA-1:0] address_mem_in;
+        
+        /******* Writeback ******/
+        wire regwrite_en_wb;
+        wire [BITS_DATA-1:0] data_wb;
+        wire [BITS_REG_SELECT-1:0] rd_wb;
         
         
         /*******  Write-back ****/
@@ -108,8 +117,23 @@ module top_core(
         /*********************************************
         ************** Decode Stage *******************
         ***********************************************/
-            
-        assign hazard_decode = no_bypass || (~data_hit); 
+        assign bypass_decode_alu_r0 = ((is_branch_decode || alu_en_decode || memwrite_en_decode || memread_en_decode) &&
+                                        alu_en_ex && rd_ex == instruction_rs0_decode);
+        assign bypass_decode_alu_r1 =((is_branch_decode || alu_en_decode || memwrite_en_decode) && 
+                                        alu_en_ex && rd_ex == instruction_rs1_decode);
+        assign bypass_decode_mem_r0 = ((is_branch_decode || alu_en_decode || memwrite_en_decode || memread_en_decode) && 
+                                        memread_en_mem && rd_mem == instruction_rs0_decode);
+        assign bypass_decode_mem_r1 =((is_branch_decode || alu_en_decode || memwrite_en_decode) && 
+                                        memread_en_mem && rd_mem == instruction_rs1_decode);
+        assign bypass_decode_wb_r0 = ((is_branch_decode || alu_en_decode || memwrite_en_decode || memread_en_decode) && 
+                                        regwrite_en_wb && rd_wb == instruction_rs0_decode);
+        assign bypass_decode_wb_r1 =((is_branch_decode || alu_en_decode || memwrite_en_decode) && 
+                                        regwrite_en_wb && rd_wb == instruction_rs1_decode);
+        /* Mem producer followed by consumer at distance 1 */
+        assign no_bypass = ((is_branch_decode || alu_en_decode || memwrite_en_decode || memread_en_decode) &&
+                            memread_en_ex && (rd_ex == instruction_rs0_decode || rd_ex == instruction_rs1_decode));
+                            
+        assign hazard_decode = ~reset && (no_bypass || (~data_hit)); 
         
         
         Control_Unit #(.BITS_INSTRUCTION(BITS_DATA),
@@ -133,22 +157,28 @@ module top_core(
             .is_byte(is_byte_decode),
             .is_branch(is_branch_decode),
             .branch_mask(branch_mask_decode),
-            .is_jump(is_jump_decode),
-            .hazard(hazard_decode)
+            .is_jump(is_jump_decode)
         );
             
-           
+        assign rs0_val_decode_final = bypass_decode_alu_r0?alu_result_ex:
+                              bypass_decode_mem_r0?memout_mem:
+                              bypass_decode_wb_r0?data_wb:rs0_val_decode;
+        
+        assign rs1_val_decode_final = bypass_decode_alu_r1?alu_result_ex:
+                              bypass_decode_mem_r1?memout_mem:
+                              bypass_decode_wb_r1?data_wb:rs1_val_decode;
+
         // Registers File with 2 true read ports, 1 write port
         Register_File #(.BITS_REG_SELECT(BITS_REG_SELECT),.BITS_REG_DATA(BITS_DATA)) register_file (
             .clk(clk),
             .reset(reset),
-            .rs(rs0_decode),
-            .rt(rs1_decode),
+            .rs(instruction_rs0_decode),
+            .rt(instruction_rs1_decode),
             .dout0(rs0_val_decode),
             .dout1(rs1_val_decode),
-            .din(data_writeback),
-            .reg_in(rd_writeback),
-            .we(update_reg_writeback)
+            .din(data_wb),
+            .reg_in(rd_wb),
+            .we(regwrite_en_wb)
         );
         
         assign effective_address_decode = (memread_en_decode | memwrite_en_decode)?(rs0_val_decode_final+immediate_extended_decode):32'b0;
@@ -164,20 +194,20 @@ module top_core(
            .reset(reset),
            .enable(1'b1), 
            // Decode -> In
-           .alu_en_in(~z & alu_en_decode),
-           .is_branch_in(~z & is_branch_decode),
+           .alu_en_in(~z & alu_en_decode & ~hazard_decode),
+           .is_branch_in(~z & is_branch_decode & ~hazard_decode),
            .branch_mask_in(z?{3{1'b0}}:branch_mask_decode),
-           .is_jump_in(~z & is_jump_decode),
+           .is_jump_in(~z & is_jump_decode & ~hazard_decode),
            .alu_opcode_in(alu_opcode_decode),
            .rs0_val_in(z?{BITS_DATA-1{1'b0}}:rs0_val_decode_final), 
            .rs1_val_in(z?{BITS_DATA-1{1'b0}}:rs1_val_decode_final), 
            .immediate_in(z?{BITS_DATA-1{1'b0}}:immediate_extended_decode),
            .use_rs1_in(~z & use_rs1_decode),
-           .regwrite_en_in(~z & regwrite_en_decode),
+           .regwrite_en_in(~z & regwrite_en_decode & ~hazard_decode),
            .rd_in(z?{BITS_REG_SELECT-1{1'b0}}:rd_decode),
            .save_pc_in(save_pc_decode),
-           .memread_en_in(memread_en_decode),
-           .memwrite_en_in(memwrite_en_decode),
+           .memread_en_in(memread_en_decode & ~hazard_decode),
+           .memwrite_en_in(memwrite_en_decode & ~hazard_decode),
            .effective_address_in(effective_address_decode),
            // Out -> ALU
            .alu_en_out(alu_en_ex),
@@ -218,27 +248,29 @@ module top_core(
 
         assign z = is_branch_ex ? (|({gt_ex,lt_ex,eq_ex} & branch_mask_ex)) : 0;   
         assign branch_pc = save_pc_ex + immediate_extended_ex;  
-        
+        assign dout_ex = memwrite_en_ex?rs1_val_ex:alu_result_ex;
         // EX to MEM  
-        Register_Ex_to_Mem #(.BITS_ADDRESS(BITS_DATA)) stage_D_M(
+        Register_Ex_to_Mem #(.BITS_ADDRESS(BITS_DATA)) stage_A_M(
             .clk(clk),
             .reset(reset),
             // Stop if we cannot access memory
-            .enable(~stop_mem),     
-            // Decode -> In
+            .enable(data_hit),     
+            // Alu-> In
             .effective_address_in(effective_address_ex),
             .is_byte_in(is_byte_ex),
             .memread_en_in(memread_en_ex),
             .memwrite_en_in(memwrite_en_ex),
-            .data_store_in(rs1_val_ex),
+            .data_in(dout_ex),
             .rd_in(rd_ex),
+            .regwrite_en_in(regwrite_en_ex),
             // Out -> Mem
             .effective_address_out(effective_address_mem),
             .is_byte_out(is_byte_mem),
             .memread_en_out(memread_en_mem),
             .memwrite_en_out(memwrite_en_mem),
-            .data_store_out(data_store_mem),
-            .rd_out(rd_mem)
+            .data_out(data_mem),
+            .rd_out(rd_mem),
+            .regwrite_en_out(regwrite_en_mem)
         );
 
         /**** EL BIT DE INVALIDATE SOLO DEBE INVALIDAR LOS MISSES DE INSTRUCCIONES *****/
@@ -255,9 +287,24 @@ module top_core(
             .re_inst(~reset), //Always fetching instruction
             .dout_data(memout_mem),
             .dout_inst(fetched_inst),
-            .din(data_store_mem),
+            .din(data_mem),
             .invalidate_req_inst(z)
         );  
+        assign dout_mem = memread_en_mem?memout_mem:data_mem;
+        Register_Mem_to_Writeback #(
+                .BITS_REG_SELECT(BITS_REG_SELECT),
+                .BITS_DATA(BITS_DATA)) 
+            stage_M_WB(
+                .clk(clk),
+                .reset(reset),
+                .enable(1),
+                .rd_in(rd_mem),
+                .rd_out(rd_wb),
+                .data_in(dout_mem),
+                .data_out(data_wb),
+                .en_wb_in(regwrite_en_mem),
+                .en_wb_out(regwrite_en_wb)
+           );
       
         
 endmodule
