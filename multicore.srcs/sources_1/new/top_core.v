@@ -98,7 +98,7 @@ module top_core(
         assign pc_p4 = pc_out+4; 
         assign next_pc = z?branch_pc:pc_p4;
         assign pc_in = reset?`RESET_PC:next_pc;
-        assign hazard_fetch = ~inst_hit | hazard_decode | z;
+        assign hazard_fetch = ~inst_hit | hazard_decode;
         
         
         // FETCH to DECODE
@@ -106,7 +106,7 @@ module top_core(
             .clk(clk),
             .enable(~hazard_decode),
             .reset(reset),
-            .fetched_instruction_in(~hazard_fetch?fetched_inst:`NOP),
+            .fetched_instruction_in((hazard_fetch | z)?`NOP:fetched_inst),
             .fetched_instruction_out(encoded_inst),
             .save_pc_in(pc_out),
             .save_pc_out(save_pc_decode)
