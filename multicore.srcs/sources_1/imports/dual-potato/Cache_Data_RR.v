@@ -34,9 +34,6 @@ module Cache_Data_RR(
         bus_data,
         bus_msg,
         addrin,
-        ready_mem,
-        read_mem,
-        write_mem,
         din,
         dout,
         hit
@@ -69,12 +66,12 @@ module Cache_Data_RR(
      localparam WAIT_BUS = 2;
      localparam MISS = 3;
                    
-     input we, re, clk, flush, reset, is_byte, ready_mem, bus_granted;
+     input we, re, clk, flush, reset, is_byte;
+     input [NUM_SETS*NUM_WAYS-1:0] bus_granted;
      output hit;
-     output bus_request;
+     output [NUM_SETS*NUM_WAYS-1:0] bus_request;
      input [BITS_WORD-1:0] din;
      input [BITS_ADDRESS_IN-1:0] addrin;
-     output reg read_mem, write_mem;
      output [BITS_WORD-1:0] dout;
      inout [BITS_BLOCK-1:0] bus_data;
      inout [BITS_ADDRESS_MEM-1:0] bus_addr;
@@ -84,6 +81,7 @@ module Cache_Data_RR(
      integer i,k;
      wire [BITS_WAY-1:0] wh;
      wire [BITS_WAY-1:0] victim_way[NUM_SETS-1:0];
+     wire [NUM_SETS*NUM_WAYS-1:0] active_unit;
      //wire [BITS_WAY-1:0] DEBUG_WAY_EVICT;
      wire [NUM_SETS-1:0] evict;
      wire [BITS_WORD-1:0] whole_word_out, block_word_out;
@@ -95,8 +93,10 @@ module Cache_Data_RR(
      wire [BITS_BYTES_IN_BLOCK-BITS_BYTES_IN_WORD-1:0] num_word_in_block = addrin[BITS_BYTES_IN_BLOCK-1:BITS_BYTES_IN_WORD];
      wire [BITS_BYTES_IN_WORD-1:0] addr_byte_in_word = addrin[BITS_BYTES_IN_WORD-1:0];
      
+     wire [NUM_SETS-1:0] data_ready;
+     
      // Write from coherence unit received blck
-     wire write_data [NUM_SETS-1:0][NUM_WAYS-1:0];
+     wire [NUM_WAYS-1:0] write_data [NUM_SETS-1:0];
      wire [BITS_BLOCK-1:0] data_to_cache [NUM_SETS-1:0][NUM_WAYS-1:0];
       
      // selected block 
@@ -109,7 +109,7 @@ module Cache_Data_RR(
      reg [BITS_BLOCK-1:0] data [0:NUM_SETS-1][0:NUM_WAYS-1];
     
      // control structure with (dirty bit + tag)
-     reg [BITS_ADDRESS_MEM:0] control [0:NUM_SETS-1][0:NUM_WAYS-1];
+     reg [BITS_ADDRESS_MEM-1:0] control [0:NUM_SETS-1][0:NUM_WAYS-1];
       
      
      // state machine
@@ -118,15 +118,10 @@ module Cache_Data_RR(
      /*
        * Control Unit FSM
      */
-     /*always @(posedge clk)
+     always @(posedge clk)
      begin    
         case(state)
             RESET:begin 
-                bus_request <= 1'b0;
-                read_mem <= 1'b0;
-                write_mem <= 1'b0;
-                addr_req_mem <= 1'b0;
-                addr_write_mem <= 1'b0;
                 for(i=0;i<NUM_SETS;i=i+1)
                     for(k=0;k<NUM_WAYS;k=k+1)begin
                         control[i][k] <= {BITS_TAG+2{1'b0}};
@@ -137,35 +132,25 @@ module Cache_Data_RR(
             READY:begin
                 if (reset) //reset
                     state <= RESET;
-                else if (~hit)begin  //miss 
-                    state <= WAIT_BUS;
-                    bus_request <= 1'b1;
-                    addr_req_mem <= {addr_tag,addr_set}; // Block addr to fill cache
-                    read_mem <= 1'b1;; //Read signal to mem 
-                    write_mem <= (control[addr_set][victim_way[addr_set]][DIRTY_BIT]);// write signal to mem
-                    addr_write_mem <= control[addr_set][victim_way[addr_set]][BITS_TAG-1:0]; //Addr to mem which write evicted block into
-                end
-            end
-            WAIT_BUS:begin
-                if(bus_granted)begin
+                else if (hit) // write on hit
+                    for(i=0; i<BITS_BLOCK; i=i+1)begin
+                        if((i >= num_word_in_block*BITS_WORD) && (i < (num_word_in_block+1)*BITS_WORD))
+                            data[addr_set][wh][i] <= din[i];
+                    end
+                else 
                     state <= MISS;
-                    bus_request <= 1'b0;
-                    addr_req_mem <= 0;
-                    read_mem <= 1'b0;
-                    write_mem <= 1'b0;
-                end
             end
             MISS:begin
-                if(ready_mem)begin
-                    // Write received blocked from memory
-                    data[addr_set][victim_way[addr_set]] <= block_mem_in;
-                    control[addr_set][victim_way[addr_set]] <= addr_tag;
-                    control[addr_set][victim_way[addr_set]][VALID_BIT] <= 1'b1;
-                    state <= READY;
-                end
+                if (reset)
+                    state <= RESET;
+                    if(|data_ready)begin
+                        data[addr_set][victim_way[addr_set]] <= data_to_cache[addr_set][victim_way[addr_set]];
+                        control[addr_set][victim_way[addr_set]] <= {addr_tag,addr_set};
+                        state <= READY;
+                    end
             end
         endcase
-     end*/
+     end
      
      /*
      * Generate connections for way and data selection 
@@ -175,7 +160,12 @@ module Cache_Data_RR(
         
         // Each way hit      
         for(w=0;w<NUM_WAYS;w=w+1)begin:hit_out
-            assign hits[w] = (control[addr_set][w][BITS_TAG-1:0] == addr_tag);
+            assign hits[w] = (control[addr_set][w] == {addr_tag,addr_set});
+        end
+        
+        // Signals to write received block from coherence unit
+        for(b=0; b<NUM_SETS; b=b+1)begin:ready_data_set
+            assign data_ready[b] = |(write_data[b]);
         end
         
         // Encoder for way select
@@ -198,15 +188,16 @@ module Cache_Data_RR(
         assign block_out = data[addr_set][wh];
               
         // Unpack block, array to bitstream
-        for(w=0; w<NUM_WORDS_IN_BLOCK; w=w+1) begin: unpack_block
-            assign unpacked_block_out[w] = block_out[((w+1)*BITS_WORD)-1 : -BITS_WORD]; 
-        end
+        assign unpacked_block_out[0] = block_out[31:0];
+        assign unpacked_block_out[1] = block_out[63:32];
+        assign unpacked_block_out[2] = block_out[95:64];
+        assign unpacked_block_out[3] = block_out[127:96];        
         
         assign whole_word_out = unpacked_block_out[num_word_in_block];
         
          // Unpack word, array to bitstream
-        for(b=0; b<WORD_SIZE_BYTES; b=b+1) begin: unpack_word
-           assign unpacked_word_out[b] = block_out[((b+1)*`BYTE)-1 : -`BYTE]; 
+        for(b=1; b<=WORD_SIZE_BYTES; b=b+1) begin: unpack_word
+           assign unpacked_word_out[b] = whole_word_out[(b*`BYTE)-1 : -`BYTE]; 
         end
         
         //One round robin queue per set to select the victim way
@@ -215,8 +206,8 @@ module Cache_Data_RR(
                 .clk(clk),
                 .init_fill(1),
                 .reset(reset),
-                .pop(evict[b] && ready_mem),
-                .push(evict[b] && ready_mem),
+                .pop(evict[b] && data_ready[b]),
+                .push(evict[b] && data_ready[b]),
                 .data_in(victim_way[b]),
                 .data_out(victim_way[b])
              );
@@ -232,14 +223,15 @@ module Cache_Data_RR(
                     .din(coherence_states_in[b][w]),
                     .dout(coherence_states_out[b][w])
                 );
-                
+                assign active_unit[b*NUM_WAYS+w] = ~hit & (victim_way[b] == w) & (addr_set == b) & ~(|(data_ready));
                 Coherence_unit #(.BITS_ADDR_BUS(BITS_ADDRESS_MEM)) block_coherence(
                     .clk(clk),
                     .reset(reset),
+                    .active_request(active_unit[b*NUM_WAYS+w]),
                     .state_in(coherence_states_out[b][w]), //coherence_state[addr_set][victim_way[addr_set]]
                     .state_out(coherence_states_in[b][w]),
-                    .coherence_bus_granted(bus_granted),
-                    .coherence_bus_req(bus_request),
+                    .coherence_bus_granted(bus_granted[b*NUM_WAYS+w]),
+                    .coherence_bus_req(bus_request[b*NUM_WAYS+w]),
                     .coherence_bus_addr(bus_addr),
                     .coherence_bus_data(bus_data),
                     .coherence_bus_msg_type(bus_msg),
@@ -254,18 +246,8 @@ module Cache_Data_RR(
         end   
       endgenerate
       
-      /* FSM data */
-      always @(posedge clk) begin
-        for(i=0; i<NUM_SETS; i=i+1)
-            for(k=0; k<NUM_WAYS; k=k+1)
-                if(reset)
-                    control[i][k] <= {BITS_ADDRESS_MEM+1{1'b0}};
-                else if(write_data[i][k])
-                    data[i][k] <= data_to_cache[i][k];
-      end
-      
       /* Signals output from cache */
       assign dout = is_byte?unpacked_word_out[addr_byte_in_word]:whole_word_out; //word out = full word or byte in word
-      assign hit = ~reset?((|hits && coherence_states_out[addr_set][wh] == `VALID) || (~re && ~we)):1'b0; //hit = any hit AND block is valid
+      assign hit = ~reset?((|hits && coherence_states_out[addr_set][wh] == `VALID) || (~re && ~we)):1'b1; //hit = any hit AND block is valid
       
 endmodule

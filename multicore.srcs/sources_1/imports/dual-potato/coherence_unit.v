@@ -23,6 +23,7 @@
 module Coherence_unit(
         clk,
         reset,
+        active_request,
         state_in, //coherence_state[addr_set][victim_way[addr_set]]
         state_out,
         coherence_bus_granted,
@@ -42,7 +43,7 @@ module Coherence_unit(
     parameter BITS_DATA_BUS = 128;
     
     input [`BITS_COHERENCE_STATES-1:0] state_in;
-    input coherence_bus_granted, evict_block, clk, reset;
+    input coherence_bus_granted, evict_block, clk, reset, active_request;
     input [BITS_ADDR_BUS-1:0] block_id_in, block_id_req;
     input [BITS_DATA_BUS-1:0] data_in;
     output reg [BITS_DATA_BUS-1:0] data_out;
@@ -66,14 +67,20 @@ module Coherence_unit(
     * Control Unit Coherence protocol (Valid/Invalid)
     */
     always @(*) begin  
-     if(reset)
+     if(reset) begin
         state_out = `INVALID;
+        coherence_bus_req = 1'b0;
+        write_data_cache = 1'b0;
+     end
      else  
          case(state_in)
              `INVALID:begin 
-                // Move to valid state if that line is invalid (MISS)
-                coherence_bus_req = 1'b1; // Request access to coherence bus
-                state_out = `WAIT_COHERENCE_BUS_INVALID;
+                write_data_cache = 1'b0;
+                if (active_request) begin
+                    // Move to valid state if that line is invalid (MISS)
+                    coherence_bus_req = 1'b1; // Request access to coherence bus
+                    state_out = `WAIT_COHERENCE_BUS_INVALID;
+                end
              end
              `WAIT_COHERENCE_BUS_INVALID: begin
                 if(coherence_bus_granted) begin
@@ -106,7 +113,7 @@ module Coherence_unit(
                 end   
              end
              `IV_DATA:begin
-                if((coherence_bus_addr == block_id_req) && (coherence_bus_msg_type == `WRITE_DATA)) begin
+                if(active_request && (coherence_bus_addr == block_id_req) && (coherence_bus_msg_type == `WRITE_DATA)) begin
                     // Write received blocked from the bus
                     data_out = coherence_bus_data;
                     write_data_cache = 1'b1;   

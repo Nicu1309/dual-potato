@@ -23,19 +23,41 @@
 
 module top_core(
     clk,
-    reset
+    reset,
+    addr_req_mem_inst,
+    block_mem_in_inst,
+    ready_mem_inst,
+    read_mem_inst,
+    coherence_bus_request,
+    coherence_bus_granted,
+    coherence_bus_addr,
+    coherence_bus_data,
+    coherence_bus_msg
     );
-    
+        parameter PROC_ID = 0;
         parameter BITS_PC = 32;
         parameter BITS_DATA = 32;
         parameter BITS_REG_SELECT = 5;
         parameter MSB_INST_CODE = 6;
         parameter LSB_INST_CODE = 0;
-        
+        parameter BITS_WAY = 2; // 4 ways
+        parameter BITS_SET = 2; // 4 sets
+        parameter BITS_ADDRESS_MEM = 28;
+        parameter BITS_BLOCK = 128;
+        localparam NUM_WAYS = 2**BITS_WAY;
+        localparam NUM_SETS = 2**BITS_SET;
         localparam BITS_ALU_OPCODE = 5;
         
         input clk;
-        input reset;
+        input reset, ready_mem_inst;
+        input [BITS_BLOCK-1:0] block_mem_in_inst;
+        output read_mem_inst;
+        output [BITS_ADDRESS_MEM-1:0] addr_req_mem_inst;
+        input [NUM_SETS*NUM_WAYS-1:0]  coherence_bus_granted;
+        output [NUM_SETS*NUM_WAYS-1:0] coherence_bus_request;
+        inout [BITS_BLOCK-1:0] coherence_bus_data;
+        inout [BITS_ADDRESS_MEM-1:0] coherence_bus_addr;
+        inout [`BITS_COHERENCE_MSG_TYPES-1:0] coherence_bus_msg;
         
         /******** Fetch  *******/
         wire z, inst_hit, hazard_fetch;
@@ -97,7 +119,14 @@ module top_core(
         
         assign pc_p4 = pc_out+4; 
         assign next_pc = z?branch_pc:pc_p4;
-        assign pc_in = reset?`RESET_PC:next_pc;
+        
+        generate //@ start changes for each processor
+        if(PROC_ID == 0)
+            assign pc_in = reset?`RESET_PC0:next_pc;
+        else
+            assign pc_in = reset?`RESET_PC1:next_pc;
+        endgenerate
+        
         assign hazard_fetch = ~inst_hit | hazard_decode;
         
         
@@ -272,9 +301,8 @@ module top_core(
             .rd_out(rd_mem),
             .regwrite_en_out(regwrite_en_mem)
         );
-
-        /**** EL BIT DE INVALIDATE SOLO DEBE INVALIDAR LOS MISSES DE INSTRUCCIONES *****/
-        Memory_System memory_hierarchy(
+        
+        Cache_system chaches(
             .clk(clk),
             .reset(reset),
             .addr_data(effective_address_mem),
@@ -288,8 +316,17 @@ module top_core(
             .dout_data(memout_mem),
             .dout_inst(fetched_inst),
             .din(data_mem),
-            .invalidate_req_inst(z)
-        );  
+            .invalidate_req_inst(z),
+            .addr_req_mem_inst(addr_req_mem_inst),
+            .block_mem_in_inst(block_mem_in_inst),
+            .ready_mem_inst(ready_mem_inst),
+            .read_mem_inst(read_mem_inst),
+            .coherence_bus_request(coherence_bus_request),
+            .coherence_bus_granted(coherence_bus_granted),
+            .coherence_bus_addr(coherence_bus_addr),
+            .coherence_bus_data(coherence_bus_data),
+            .coherence_bus_msg(coherence_bus_msg)
+        );
         assign dout_mem = memread_en_mem?memout_mem:data_mem;
         Register_Mem_to_Writeback #(
                 .BITS_REG_SELECT(BITS_REG_SELECT),
